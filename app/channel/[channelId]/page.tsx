@@ -34,12 +34,17 @@ export default function ChannelPage({ params }: PageProps) {
   const [isConnecting, setIsConnecting] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [inputValue, setInputValue] = useState(''); // 누락된 상태 추가
+  const [error, setError] = useState<string | null>(null); // 누락된 오류 상태 추가
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectCountRef = useRef<number>(0);
   const isInitialLoadRef = useRef<boolean>(true);
   const lastMessageIdRef = useRef<string | null>(null);
   const prevChannelRef = useRef<string | null>(null);
+  const heartbeatTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 하트비트 타임아웃 추가
+  const pingTimeRef = useRef<number>(Date.now()); // 마지막 핑 시간 추적
 
   // 채널 변경 감지 및 메시지 초기화
   useEffect(() => {
@@ -54,11 +59,18 @@ export default function ChannelPage({ params }: PageProps) {
       
       // 메시지 상태 초기화
       setMessages([]);
+      setError(null); // 오류 상태 초기화
       
       // 재연결 시도 중지
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
+      }
+      
+      // 하트비트 타임아웃 정리
+      if (heartbeatTimeoutRef.current) {
+        clearTimeout(heartbeatTimeoutRef.current);
+        heartbeatTimeoutRef.current = null;
       }
       
       // 재연결 카운터 초기화
@@ -112,58 +124,99 @@ export default function ChannelPage({ params }: PageProps) {
     }
   }, [messages, channelId]);
 
-  // SSE 메시지 처리
-  const handleEventSourceMessage = useCallback((event: MessageEvent) => {
+  // SSE 메시지 처리 핸들러
+  const handleEventSourceMessage = useCallback((e: MessageEvent) => {
     try {
-      // 현재 활성화된 채널에 대한 메시지만 처리
-      if (prevChannelRef.current !== channelId) {
-        console.log('채널이 변경되어 메시지를 무시합니다.');
+      // 빈 메시지 무시
+      if (!e.data || e.data === '') return;
+      
+      // 하트비트 메시지 시간 업데이트
+      pingTimeRef.current = Date.now();
+      
+      let parsedData;
+      try {
+        parsedData = JSON.parse(e.data);
+      } catch (jsonError) {
+        console.error('SSE 메시지 파싱 오류:', jsonError, '메시지:', e.data);
         return;
       }
       
-      // 핑 메시지인 경우 처리하지 않음
-      if (event.data.includes('"type":"ping"')) return;
-      
-      // 서버 오류 메시지 처리
-      if (event.data.includes('"type":"error"')) {
-        const errorData = JSON.parse(event.data);
-        setConnectionError(errorData.message);
+      // 핑 메시지 처리
+      if (parsedData.type === 'ping') {
+        pingTimeRef.current = Date.now();
         return;
       }
-
-      const data = JSON.parse(event.data) as ChatMessage | { type: string; message: string; timestamp: number };
       
-      // 연결 확인 메시지 처리
-      if ('type' in data && data.type === 'connect') {
-        console.log('SSE 연결 성공:', data.message);
+      // 오류 메시지 처리
+      if (parsedData.type === 'error') {
+        setError(parsedData.message || '서버에서 오류가 발생했습니다.');
         return;
       }
-
-      // 채팅 메시지 처리 (타입 가드)
-      if ('id' in data && 'channel' in data && 'sender' in data && 'content' in data) {
-        // 현재 채널의 메시지만 처리
-        if (data.channel !== channelId) {
-          console.log(`다른 채널(${data.channel}) 메시지 무시`);
-          return;
-        }
-        
-        setMessages((prevMessages) => {
-          // 중복 메시지 방지 (ID가 같은 메시지는 추가하지 않음)
-          const isDuplicate = prevMessages.some(msg => msg.id === data.id);
-          if (isDuplicate) {
-            return prevMessages;
-          }
-          
-          // 마지막 메시지 ID 업데이트
-          lastMessageIdRef.current = data.id;
-          
-          return [...prevMessages, data];
-        });
+      
+      // 재연결 메시지 처리
+      if (parsedData.type === 'reconnect') {
+        console.log('서버에 재연결되었습니다:', parsedData.message);
+        setIsConnected(true);
+        return;
+      }
+      
+      // 연결 메시지 처리
+      if (parsedData.type === 'connect') {
+        console.log('서버에 연결되었습니다:', parsedData.message);
+        setIsConnected(true);
+        return;
+      }
+      
+      // 메시지 검증
+      if (!parsedData.id || !parsedData.channel) {
+        console.error('SSE 메시지 형식 오류: 필수 필드 누락', parsedData);
+        return;
+      }
+      
+      // 다른 채널의 메시지는 무시
+      if (parsedData.channel !== channelId) {
+        return;
+      }
+      
+      // 중복 메시지 확인 후 추가
+      if (!messages.some(msg => msg.id === parsedData.id)) {
+        setMessages(prev => [...prev, parsedData]);
+        lastMessageIdRef.current = parsedData.id;
       }
     } catch (error) {
-      console.error('메시지 파싱 에러:', error);
+      console.error('SSE 메시지 처리 오류:', error);
     }
-  }, [channelId]);
+  }, [messages, channelId]);
+
+  // 하트비트 체커 설정
+  const setupHeartbeatChecker = useCallback(() => {
+    // 기존 타임아웃 정리
+    if (heartbeatTimeoutRef.current) {
+      clearTimeout(heartbeatTimeoutRef.current);
+    }
+    
+    // 60초 동안 메시지가 없으면 연결 끊김으로 간주
+    heartbeatTimeoutRef.current = setTimeout(() => {
+      const lastPingDuration = Date.now() - pingTimeRef.current;
+      console.log(`마지막 핑으로부터 ${lastPingDuration}ms 경과`);
+      
+      if (lastPingDuration > 60000) { // 60초
+        console.log('서버로부터 60초 이상 메시지가 없어 연결을 재설정합니다.');
+        setIsConnected(false);
+        
+        if (eventSource) {
+          eventSource.close();
+          setEventSource(null);
+        }
+        
+        // 재연결 시도
+        connectSSE();
+      } else {
+        // 다시 체크 설정
+        setupHeartbeatChecker();
+      }
+    }, 30000); // 30초마다 체크
+  }, [eventSource]);
 
   // SSE 연결 설정
   const connectSSE = useCallback(() => {
@@ -184,9 +237,18 @@ export default function ChannelPage({ params }: PageProps) {
       eventSource.close();
     }
     
+    // 하트비트 타임아웃 정리
+    if (heartbeatTimeoutRef.current) {
+      clearTimeout(heartbeatTimeoutRef.current);
+    }
+    
     try {
+      // 고유 사용자 ID 저장 또는 생성
       const userId = localStorage.getItem('chat_user_id') || uuidv4();
       localStorage.setItem('chat_user_id', userId);
+      
+      // 핑 시간 초기화
+      pingTimeRef.current = Date.now();
       
       // SSE 연결
       const newEventSource = new EventSource(`/api/chat/sse?channel=${channelId}&userId=${userId}`);
@@ -196,7 +258,9 @@ export default function ChannelPage({ params }: PageProps) {
         console.log(`채널 ${channelId}에 SSE 연결 성공`);
         setIsConnected(true);
         setIsConnecting(false);
+        setError(null);
         reconnectCountRef.current = 0;
+        pingTimeRef.current = Date.now();
         
         // 초기 로딩이 아닌 경우에만 입장 메시지 전송
         if (!isInitialLoadRef.current) {
@@ -204,6 +268,9 @@ export default function ChannelPage({ params }: PageProps) {
         } else {
           isInitialLoadRef.current = false;
         }
+        
+        // 하트비트 체커 설정
+        setupHeartbeatChecker();
       };
       
       // 메시지 수신 이벤트
@@ -232,7 +299,10 @@ export default function ChannelPage({ params }: PageProps) {
         
         // 최대 재시도 횟수 제한 (20번)
         if (reconnectCountRef.current < 20) {
+          // 지수 백오프 적용 (최대 30초)
           const delay = Math.min(1000 * Math.pow(1.5, reconnectCountRef.current), 30000);
+          console.log(`${delay}ms 후 재연결 시도 예정 (${reconnectCountRef.current + 1}/20)`);
+          
           reconnectTimeoutRef.current = setTimeout(() => {
             // 채널이 그대로인 경우에만 재연결
             if (prevChannelRef.current === channelId) {
@@ -240,7 +310,7 @@ export default function ChannelPage({ params }: PageProps) {
               console.log(`채널 ${channelId}에 대한 SSE 재연결 시도 (${reconnectCountRef.current}/20)`);
               connectSSE();
             }
-          }, delay); // 지수 백오프 적용
+          }, delay);
         } else {
           setConnectionError('서버 연결에 실패했습니다. 페이지를 새로고침하거나 나중에 다시 시도해주세요.');
         }
@@ -252,7 +322,7 @@ export default function ChannelPage({ params }: PageProps) {
       setIsConnecting(false);
       setConnectionError('서버 연결을 초기화하는 중 오류가 발생했습니다.');
     }
-  }, [channelId, handleEventSourceMessage, isConnecting, eventSource]);
+  }, [channelId, handleEventSourceMessage, isConnecting, eventSource, setupHeartbeatChecker]);
 
   // 입장 메시지 전송 함수
   const sendJoinMessage = useCallback(() => {
@@ -262,6 +332,7 @@ export default function ChannelPage({ params }: PageProps) {
       sender: 'system',
       content: `<em>${username}님이 채팅방에 입장했습니다.</em>`,
       timestamp: Date.now(),
+      type: 'system',
     };
     
     // 서버에 입장 메시지 보내기
@@ -290,21 +361,21 @@ export default function ChannelPage({ params }: PageProps) {
       sender: 'system',
       content: `<em>${username}님이 채팅방에서 나갔습니다.</em>`,
       timestamp: Date.now(),
+      type: 'system',
     };
     
-    // 서버에 퇴장 메시지 보내기
-    fetch('/api/chat/send', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    // 서버에 퇴장 메시지 보내기 (동기식 요청으로 페이지 종료 전에 전송 보장)
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/chat/send', false); // 동기식 요청
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.send(JSON.stringify({
         channel: channelId,
         message: leaveMessage,
-      }),
-    }).catch(error => {
+      }));
+    } catch (error) {
       console.error('퇴장 메시지 전송 에러:', error);
-    });
+    }
   }, [channelId, username, isConnected]);
 
   // 컴포넌트 마운트 시 SSE 연결
@@ -312,10 +383,20 @@ export default function ChannelPage({ params }: PageProps) {
     // 채널 변경 시마다 새로운 연결 설정
     connectSSE();
     
-    // beforeunload 이벤트에 대한 핸들러 추가
+    // beforeunload 이벤트에 대한 핸들러 추가 (페이지 이탈 시)
     const handleBeforeUnload = () => {
       if (isConnected) {
         sendLeaveMessage();
+      }
+      
+      // 하트비트 타임아웃 정리
+      if (heartbeatTimeoutRef.current) {
+        clearTimeout(heartbeatTimeoutRef.current);
+      }
+      
+      // 재연결 타임아웃 정리
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
       }
     };
     
@@ -341,24 +422,34 @@ export default function ChannelPage({ params }: PageProps) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      
+      // 하트비트 타임아웃 정리
+      if (heartbeatTimeoutRef.current) {
+        clearTimeout(heartbeatTimeoutRef.current);
+        heartbeatTimeoutRef.current = null;
+      }
     };
   }, [channelId, connectSSE, eventSource, sendLeaveMessage, isConnected]);
 
-  // 메시지 전송
-  const handleSendMessage = async (content: string) => {
-    if (!isConnected || !content.trim()) return;
-    
-    const newMessage: ChatMessage = {
-      id: uuidv4(),
-      channel: channelId,
-      sender: username,
-      content,
-      timestamp: Date.now(),
-    };
+  // 메시지 전송 핸들러
+  const handleSendMessage = async (newMessage: string) => {
+    // 빈 메시지는 전송하지 않음
+    if (!newMessage.trim()) return;
     
     try {
-      // 메시지를 먼저 로컬에 표시 (즉각적인 UI 반응)
-      setMessages(prev => [...prev, newMessage]);
+      // 메시지 객체 생성
+      const messageObject: ChatMessage = {
+        id: uuidv4(),
+        channel: channelId,
+        sender: username,
+        content: newMessage.trim(),
+        timestamp: Date.now(),
+      };
+      
+      const requestBody = JSON.stringify({
+        channel: channelId,
+        message: messageObject,
+      });
       
       // 서버에 메시지 전송
       const response = await fetch('/api/chat/send', {
@@ -366,21 +457,23 @@ export default function ChannelPage({ params }: PageProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          channel: channelId,
-          message: newMessage,
-        }),
+        body: requestBody,
       });
       
       if (!response.ok) {
-        throw new Error(`서버 응답 오류: ${response.status}`);
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `서버 오류: ${response.status}`);
       }
-    } catch (error) {
-      console.error('메시지 전송 에러:', error);
-      alert('메시지 전송에 실패했습니다. 다시 시도해주세요.');
       
-      // 실패한 메시지 제거
-      setMessages(prev => prev.filter(msg => msg.id !== newMessage.id));
+      // 입력 필드 초기화
+      setInputValue('');
+      
+    } catch (error) {
+      console.error('메시지 전송 오류:', error);
+      setError(`메시지를 보낼 수 없습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      
+      // 3초 후 오류 메시지 제거
+      setTimeout(() => setError(null), 3000);
     }
   };
 
@@ -397,6 +490,7 @@ export default function ChannelPage({ params }: PageProps) {
         sender: 'system',
         content: '<em>채팅 기록이 초기화되었습니다.</em>',
         timestamp: Date.now(),
+        type: 'system',
       };
       
       setMessages([clearMessage]);
@@ -452,6 +546,29 @@ export default function ChannelPage({ params }: PageProps) {
     }
     
     return null;
+  };
+
+  // 임시 오류 메시지
+  const renderErrorToast = () => {
+    if (!error) return null;
+    
+    return (
+      <div className="fixed bottom-4 right-4 bg-red-500 text-white p-3 rounded-md shadow-lg z-50 max-w-md">
+        <div className="flex items-center">
+          <svg className="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>{error}</span>
+        </div>
+        <button 
+          onClick={() => setError(null)} 
+          className="absolute top-1 right-1 text-white"
+          aria-label="닫기"
+        >
+          ✕
+        </button>
+      </div>
+    );
   };
 
   return (
@@ -515,8 +632,12 @@ export default function ChannelPage({ params }: PageProps) {
         <MessageInput
           onSendMessage={handleSendMessage}
           disabled={!isConnected}
+          value={inputValue}
+          onChange={setInputValue}
         />
       </div>
+      
+      {renderErrorToast()}
     </div>
   );
 }

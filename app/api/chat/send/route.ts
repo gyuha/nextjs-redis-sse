@@ -4,7 +4,28 @@ import { ChatMessage } from '@/lib/types';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // 요청 본문 텍스트 먼저 확인
+    const text = await request.text();
+    
+    // 빈 요청 본문 체크
+    if (!text || text.trim() === '') {
+      return NextResponse.json(
+        { error: '요청 본문이 비어있습니다.' },
+        { status: 400 }
+      );
+    }
+    
+    // 유효한 JSON 파싱
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch (e) {
+      return NextResponse.json(
+        { error: '유효하지 않은 JSON 형식입니다.' },
+        { status: 400 }
+      );
+    }
+    
     const { channel, message } = body;
     
     // 요청 유효성 검사
