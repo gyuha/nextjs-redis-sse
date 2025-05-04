@@ -50,7 +50,6 @@ redis를 sub/pub을 이용해서 sse 채팅 서비스를 만든다.
 - **상태 관리**: Zustand
 - **스타일링**: Tailwind CSS, Shadcn UI
 - **서버 통신**: Server-Sent Events (SSE)
-- **클라이언트**: React 19.0.0
 - **기타 라이브러리**:
   - Framer Motion (애니메이션)
   - React Hook Form (폼 처리)
@@ -60,6 +59,8 @@ redis를 sub/pub을 이용해서 sse 채팅 서비스를 만든다.
 - **패키지 매니저**: pnpm
 
 ## 3. Redis를 이용한 SSE 기능 구현
+- 사용자는 관리 하지 않음
+- 채널별로 채팅 메시지 sub/pub 관리만 해 줌.
 
 ## 4. 테스트 코드 작성 및 동작 테스트
 playwright mcp를 이용해서 정상적으로 동작하는지 테스트 코드를 만들고 테스트를 진행 해 줘,
