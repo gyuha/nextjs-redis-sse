@@ -39,10 +39,43 @@ export default function ChannelPage({ params }: PageProps) {
   const reconnectCountRef = useRef<number>(0);
   const isInitialLoadRef = useRef<boolean>(true);
   const lastMessageIdRef = useRef<string | null>(null);
+  const prevChannelRef = useRef<string | null>(null);
+
+  // 채널 변경 감지 및 메시지 초기화
+  useEffect(() => {
+    // 채널이 변경되었는지 확인
+    if (prevChannelRef.current && prevChannelRef.current !== channelId) {
+      // 이전 EventSource 정리
+      if (eventSource) {
+        console.log(`채널 변경: ${prevChannelRef.current} -> ${channelId}, 이전 SSE 연결 종료`);
+        eventSource.close();
+        setEventSource(null);
+      }
+      
+      // 메시지 상태 초기화
+      setMessages([]);
+      
+      // 재연결 시도 중지
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      
+      // 재연결 카운터 초기화
+      reconnectCountRef.current = 0;
+      
+      // 초기 로드 상태 활성화
+      isInitialLoadRef.current = true;
+    }
+    
+    // 현재 채널 저장
+    prevChannelRef.current = channelId;
+  }, [channelId, eventSource]);
 
   // 로컬 스토리지에서 채팅 로그 불러오기
   useEffect(() => {
-    if (typeof window !== 'undefined' && isInitialLoadRef.current) {
+    // 채널이 변경되면 로컬 스토리지에서 새 채널 메시지를 불러옴
+    if (typeof window !== 'undefined') {
       try {
         const savedMessages = loadChannelMessages(channelId);
         if (savedMessages.length > 0) {
@@ -52,9 +85,13 @@ export default function ChannelPage({ params }: PageProps) {
           if (lastMessage) {
             lastMessageIdRef.current = lastMessage.id;
           }
+        } else {
+          // 저장된 메시지가 없으면 빈 배열로 초기화
+          setMessages([]);
         }
       } catch (error) {
         console.error('채팅 로그 로드 중 오류:', error);
+        setMessages([]);
       }
     }
   }, [channelId]);
@@ -78,6 +115,12 @@ export default function ChannelPage({ params }: PageProps) {
   // SSE 메시지 처리
   const handleEventSourceMessage = useCallback((event: MessageEvent) => {
     try {
+      // 현재 활성화된 채널에 대한 메시지만 처리
+      if (prevChannelRef.current !== channelId) {
+        console.log('채널이 변경되어 메시지를 무시합니다.');
+        return;
+      }
+      
       // 핑 메시지인 경우 처리하지 않음
       if (event.data.includes('"type":"ping"')) return;
       
@@ -98,6 +141,12 @@ export default function ChannelPage({ params }: PageProps) {
 
       // 채팅 메시지 처리 (타입 가드)
       if ('id' in data && 'channel' in data && 'sender' in data && 'content' in data) {
+        // 현재 채널의 메시지만 처리
+        if (data.channel !== channelId) {
+          console.log(`다른 채널(${data.channel}) 메시지 무시`);
+          return;
+        }
+        
         setMessages((prevMessages) => {
           // 중복 메시지 방지 (ID가 같은 메시지는 추가하지 않음)
           const isDuplicate = prevMessages.some(msg => msg.id === data.id);
@@ -114,15 +163,24 @@ export default function ChannelPage({ params }: PageProps) {
     } catch (error) {
       console.error('메시지 파싱 에러:', error);
     }
-  }, []);
+  }, [channelId]);
 
   // SSE 연결 설정
   const connectSSE = useCallback(() => {
+    // 이미 연결 중인 경우 중복 연결 방지
+    if (isConnecting && eventSource) {
+      console.log('이미 SSE 연결이 시도 중입니다.');
+      return;
+    }
+    
+    console.log(`채널 ${channelId}에 대한 SSE 연결 시작`);
+    
     setIsConnecting(true);
     setConnectionError(null);
     
     // 이전 EventSource 정리
     if (eventSource) {
+      console.log('이전 SSE 연결 종료');
       eventSource.close();
     }
     
@@ -135,7 +193,7 @@ export default function ChannelPage({ params }: PageProps) {
       
       // 연결 성공 이벤트
       newEventSource.onopen = () => {
-        console.log('SSE 연결 성공');
+        console.log(`채널 ${channelId}에 SSE 연결 성공`);
         setIsConnected(true);
         setIsConnecting(false);
         reconnectCountRef.current = 0;
@@ -154,6 +212,14 @@ export default function ChannelPage({ params }: PageProps) {
       // 오류 이벤트
       newEventSource.onerror = (error) => {
         console.error('SSE 에러:', error);
+        
+        // 다른 채널로 이미 이동했다면 에러 무시
+        if (prevChannelRef.current !== channelId) {
+          console.log('채널이 변경되어 SSE 에러를 무시합니다.');
+          newEventSource.close();
+          return;
+        }
+        
         setIsConnected(false);
         setIsConnecting(false);
         setConnectionError('서버와의 연결이 끊어졌습니다. 다시 연결을 시도합니다.');
@@ -168,8 +234,12 @@ export default function ChannelPage({ params }: PageProps) {
         if (reconnectCountRef.current < 20) {
           const delay = Math.min(1000 * Math.pow(1.5, reconnectCountRef.current), 30000);
           reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectCountRef.current++;
-            connectSSE();
+            // 채널이 그대로인 경우에만 재연결
+            if (prevChannelRef.current === channelId) {
+              reconnectCountRef.current++;
+              console.log(`채널 ${channelId}에 대한 SSE 재연결 시도 (${reconnectCountRef.current}/20)`);
+              connectSSE();
+            }
           }, delay); // 지수 백오프 적용
         } else {
           setConnectionError('서버 연결에 실패했습니다. 페이지를 새로고침하거나 나중에 다시 시도해주세요.');
@@ -182,7 +252,7 @@ export default function ChannelPage({ params }: PageProps) {
       setIsConnecting(false);
       setConnectionError('서버 연결을 초기화하는 중 오류가 발생했습니다.');
     }
-  }, [channelId, handleEventSourceMessage]);
+  }, [channelId, handleEventSourceMessage, isConnecting, eventSource]);
 
   // 입장 메시지 전송 함수
   const sendJoinMessage = useCallback(() => {
@@ -211,6 +281,9 @@ export default function ChannelPage({ params }: PageProps) {
   
   // 퇴장 메시지 전송 함수
   const sendLeaveMessage = useCallback(() => {
+    // 연결이 활성화된 경우에만 퇴장 메시지 전송
+    if (!isConnected) return;
+    
     const leaveMessage: ChatMessage = {
       id: uuidv4(),
       channel: channelId,
@@ -232,37 +305,44 @@ export default function ChannelPage({ params }: PageProps) {
     }).catch(error => {
       console.error('퇴장 메시지 전송 에러:', error);
     });
-  }, [channelId, username]);
+  }, [channelId, username, isConnected]);
 
   // 컴포넌트 마운트 시 SSE 연결
   useEffect(() => {
+    // 채널 변경 시마다 새로운 연결 설정
     connectSSE();
     
     // beforeunload 이벤트에 대한 핸들러 추가
     const handleBeforeUnload = () => {
-      sendLeaveMessage();
+      if (isConnected) {
+        sendLeaveMessage();
+      }
     };
     
     window.addEventListener('beforeunload', handleBeforeUnload);
     
-    // 컴포넌트 언마운트 시 정리
+    // 컴포넌트 언마운트 또는 채널 변경 시 정리
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       
+      // 채널이 변경되거나 페이지를 벗어나는 경우 퇴장 메시지 전송
+      if (isConnected && !document.hidden) {
+        sendLeaveMessage();
+      }
+      
+      // 현재 채널 EventSource 정리
       if (eventSource) {
+        console.log(`채널 ${channelId}에서 나가며 SSE 연결 종료`);
         eventSource.close();
       }
       
+      // 재연결 시도 중지
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
-      }
-      
-      // 페이지 이동 시에만 퇴장 메시지 전송
-      if (!document.hidden) {
-        sendLeaveMessage();
+        reconnectTimeoutRef.current = null;
       }
     };
-  }, [channelId, username, connectSSE, sendLeaveMessage]);
+  }, [channelId, connectSSE, eventSource, sendLeaveMessage, isConnected]);
 
   // 메시지 전송
   const handleSendMessage = async (content: string) => {
