@@ -22,12 +22,15 @@ interface PageProps {
   params: {
     channelId: string;
   };
+  searchParams: {
+    username: string | null;
+  };
+
 }
 
-export default function ChannelPage({ params }: PageProps) {
-  const { channelId } = params;
-  const searchParams = useSearchParams();
-  const username = searchParams?.get('username') || '익명';
+export default async function ChannelPage({ params, searchParams }: PageProps) {
+  const { channelId } = await params;
+  const username = await searchParams?.get('username') || '익명';
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
