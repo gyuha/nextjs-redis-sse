@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { v4 as uuidv4 } from 'uuid';
-import { MessageInput } from '@/components/chat/message-input';
 import { ChatMessageItem } from '@/components/chat/message';
+import { MessageInput } from '@/components/chat/message-input';
 import { Sidebar } from '@/components/chat/sidebar';
 import { ErrorFallback } from '@/components/ui/error-fallback';
-import { ChatMessage, ChatChannel } from '@/lib/types';
+import { ChatChannel, ChatMessage } from '@/lib/types';
 import { loadChannelMessages, saveChannelMessages } from '@/lib/utils';
+import { Params } from 'next/dist/server/request/params';
+import { SearchParams } from 'next/dist/server/request/search-params';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
 // 기본 채널 목록
 const defaultChannels: ChatChannel[] = [
@@ -19,18 +20,16 @@ const defaultChannels: ChatChannel[] = [
 ];
 
 interface PageProps {
-  params: {
-    channelId: string;
-  };
-  searchParams: {
-    username: string | null;
-  };
+  params: Params;
+  searchParams: SearchParams;
 
 }
 
-export default async function ChannelPage({ params, searchParams }: PageProps) {
-  const { channelId } = await params;
-  const username = await searchParams?.get('username') || '익명';
+export default function ChannelPage(props: PageProps) {
+  const params = use(props.params);
+  const searchParams = use(props.searchParams);
+  const channelId = params.channelId || 'general';
+  const username = searchParams.username || '익명 사용자';
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
