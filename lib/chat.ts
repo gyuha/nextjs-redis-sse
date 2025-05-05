@@ -6,6 +6,7 @@ import { ChatMessage } from './pubsub';
 // SSE 연결 관리 훅
 export function useSSEConnection(channelId: string, username: string) {
   const eventSourceRef = useRef<EventSource | null>(null);
+  const cleanupInProgressRef = useRef<boolean>(false);
   const {
     setConnected,
     setConnecting,
@@ -21,6 +22,12 @@ export function useSSEConnection(channelId: string, username: string) {
       return;
     }
 
+    // 이미 정리 작업이 진행 중이면 새 연결을 시작하지 않음
+    if (cleanupInProgressRef.current) {
+      console.log('이전 연결의 정리 작업이 진행 중입니다. 잠시 후 다시 시도합니다.');
+      return;
+    }
+
     // 이미 연결된 EventSource가 있으면 닫기
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -31,22 +38,30 @@ export function useSSEConnection(channelId: string, username: string) {
     setConnecting(true);
     setConnectionError(null);
 
+    let isAborted = false; // 현재 effect가 취소됐는지 추적
+
     // 채널 입장 처리
     joinChannel(channelId, username)
       .then(() => {
+        if (isAborted) return Promise.reject(new Error('Connection aborted'));
         // 최근 메시지 가져오기
         return fetchRecentMessages(channelId);
       })
       .then((messages) => {
+        if (isAborted) return;
         // 메시지를 스토어에 설정
         useChatStore.getState().setMessages(channelId, messages);
         
         // SSE 연결 시작
-        const apiUrl = `/api/sse?channelId=${encodeURIComponent(channelId)}`;
+        const apiUrl = `/api/sse?channelId=${encodeURIComponent(channelId)}&username=${encodeURIComponent(username)}`;
         const eventSource = new EventSource(apiUrl);
         
         // 연결 성공 이벤트
         eventSource.addEventListener('connected', () => {
+          if (isAborted) {
+            eventSource.close();
+            return;
+          }
           setConnected(true);
           setConnecting(false);
         });
@@ -54,6 +69,7 @@ export function useSSEConnection(channelId: string, username: string) {
         // 메시지 수신 이벤트
         eventSource.addEventListener('message', (event) => {
           try {
+            if (isAborted) return;
             const message = JSON.parse(event.data) as ChatMessage;
             addMessage(channelId, message);
           } catch (error) {
@@ -64,6 +80,7 @@ export function useSSEConnection(channelId: string, username: string) {
         // 사용자 목록 업데이트 이벤트
         eventSource.addEventListener('users', (event) => {
           try {
+            if (isAborted) return;
             const users = JSON.parse(event.data) as string[];
             setChannelUsers(channelId, users);
           } catch (error) {
@@ -73,6 +90,7 @@ export function useSSEConnection(channelId: string, username: string) {
         
         // 오류 발생 시
         eventSource.addEventListener('error', () => {
+          if (isAborted) return;
           setConnectionError('서버와의 연결이 끊어졌습니다.');
           setConnected(false);
           setConnecting(false);
@@ -83,6 +101,7 @@ export function useSSEConnection(channelId: string, username: string) {
         eventSourceRef.current = eventSource;
       })
       .catch((error) => {
+        if (isAborted) return;
         setConnectionError(`연결 오류: ${error.message}`);
         setConnected(false);
         setConnecting(false);
@@ -90,17 +109,36 @@ export function useSSEConnection(channelId: string, username: string) {
 
     // 컴포넌트 언마운트 또는 채널/사용자 변경 시 정리
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
+      isAborted = true; // 현재 effect 취소 표시
+      cleanupInProgressRef.current = true; // 정리 작업 진행 중임을 표시
       
-      // 채널에서 퇴장 처리
-      leaveChannel(channelId, username).catch((error) => {
-        console.error('채널 퇴장 오류:', error);
-      });
+      // 비동기 정리 작업 시작
+      const cleanup = async () => {
+        console.log(`채널 ${channelId} 연결 정리 시작`);
+        
+        // SSE 연결 종료
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
+        
+        try {
+          // 채널에서 퇴장 처리 - 반드시 await 사용
+          await leaveChannel(channelId, username);
+          console.log(`채널 ${channelId}에서 성공적으로 퇴장했습니다.`);
+        } catch (error) {
+          console.error(`채널 ${channelId} 퇴장 오류:`, error);
+        } finally {
+          // 연결 상태 초기화
+          setConnected(false);
+          // 정리 작업 완료 표시
+          cleanupInProgressRef.current = false;
+          console.log(`채널 ${channelId} 연결 정리 완료`);
+        }
+      };
       
-      setConnected(false);
+      // 정리 작업 시작 - 완료를 기다리지는 않지만 작업은 시작됨
+      cleanup();
     };
   }, [channelId, username]);
 }

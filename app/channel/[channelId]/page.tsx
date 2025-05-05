@@ -21,6 +21,7 @@ interface ChannelPageProps {
 export default function ChannelPage({ params }: ChannelPageProps) {
   const router = useRouter()
   const unwrappedParams = use(params)
+  console.log('📢[page.tsx:24]: unwrappedParams: ', unwrappedParams);
   const { channelId } = unwrappedParams
   const decodedChannelId = decodeURIComponent(channelId)
   
@@ -68,12 +69,32 @@ export default function ChannelPage({ params }: ChannelPageProps) {
   // 채널 전환 핸들러
   const handleChangeChannel = async (newChannelId: string) => {
     if (newChannelId !== decodedChannelId) {
-      setIsSwitchingChannel(true)
+      setIsSwitchingChannel(true);
       try {
-        await leaveChannel(decodedChannelId, username)
-        router.push(`/channel/${encodeURIComponent(newChannelId)}`)
+        console.log(`${decodedChannelId} 채널에서 ${newChannelId} 채널로 전환 시작`);
+        
+        // 현재 채널에서 퇴장하는 과정이 완전히 완료되도록 함
+        const leavePromise = leaveChannel(decodedChannelId, username);
+        
+        try {
+          // 퇴장 요청이 완료될 때까지 기다리고 응답을 기록
+          await leavePromise;
+          console.log(`${decodedChannelId} 채널에서 퇴장 완료`);
+        } catch (leaveError) {
+          console.error(`${decodedChannelId} 채널 퇴장 중 오류:`, leaveError);
+        }
+        
+        // 약간의 지연 시간을 줘서 서버 측 리소스 정리를 완료할 시간을 확보
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // 새로운 채널로 이동
+        console.log(`${newChannelId} 채널로 이동`);
+        router.push(`/channel/${encodeURIComponent(newChannelId)}`);
       } finally {
-        setIsSwitchingChannel(false)
+        // 타임아웃으로 채널 전환 블록 상태를 해제 (안전성 확보)
+        setTimeout(() => {
+          if (setIsSwitchingChannel) setIsSwitchingChannel(false);
+        }, 3000);
       }
     }
   }
