@@ -10,6 +10,7 @@ import MessageInput from '@/components/chat/message-input'
 import { Separator } from '@/components/ui/separator'
 import { Loader2 } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { use } from 'react'
 
 interface ChannelPageProps {
   params: {
@@ -19,7 +20,8 @@ interface ChannelPageProps {
 
 export default function ChannelPage({ params }: ChannelPageProps) {
   const router = useRouter()
-  const { channelId } = params
+  const unwrappedParams = use(params)
+  const { channelId } = unwrappedParams
   const decodedChannelId = decodeURIComponent(channelId)
   
   const { 
