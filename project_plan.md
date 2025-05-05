@@ -98,8 +98,40 @@ Redis의 Pub/Sub 기능을 활용하여 Server-Sent Events(SSE) 기반의 실시
    - 메시지 입력 폼 구현
    - 사이드바 및 채널 목록 구현
    - 채팅 페이지 레이아웃 구현
+   - 현재는 더미 데이터를 사용하여 UI 구현 완료
    
 3. **다음 단계 계획**
    - .env 파일 생성 및 Redis 연결 정보 설정
-   - Redis 클라이언트 설정
+   - Redis 클라이언트 설정 구현
    - SSE 핸들러 및 메시지 전송 API 구현
+   - Zustand를 이용한 상태 관리 구현
+
+## 현재 완성된 파일 구조
+```
+app/
+  page.tsx                  # 메인 페이지 (사용자 입장)
+  globals.css               # 전역 스타일
+  layout.tsx               
+  channel/
+    [channelId]/
+      page.tsx              # 채팅 채널 페이지
+components/
+  chat/
+    message-input.tsx       # 메시지 입력 컴포넌트
+    message-item.tsx        # 개별 메시지 표시 컴포넌트
+    message-list.tsx        # 메시지 목록 컴포넌트
+  forms/
+    user-entry-form.tsx     # 사용자 입장 폼 컴포넌트
+  sidebar/
+    channel-sidebar.tsx     # 채널 사이드바 컴포넌트
+  ui/                       # Shadcn UI 컴포넌트들
+    button.tsx
+    card.tsx
+    input.tsx
+    avatar.tsx
+    separator.tsx
+    textarea.tsx
+    form.tsx
+lib/
+  utils.ts                  # 유틸리티 함수
+```
