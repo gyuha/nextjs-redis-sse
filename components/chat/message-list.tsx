@@ -81,9 +81,9 @@ export default function MessageList({
           
           {/* 해당 날짜의 메시지들 */}
           <div className="space-y-4">
-            {msgs.map((message) => (
+            {msgs.map((message, index) => (
               <MessageItem 
-                key={message.id} 
+                key={`${message.id || message.timestamp}-${index}`} 
                 message={message} 
                 isCurrentUser={message.username === currentUser} 
               />

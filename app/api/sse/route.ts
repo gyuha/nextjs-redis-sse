@@ -23,6 +23,8 @@ export async function GET(request: NextRequest) {
 
   // SSE 응답 생성
   const encoder = new TextEncoder();
+  let isControllerClosed = false; // 컨트롤러 상태를 추적하기 위한 플래그
+
   const stream = new ReadableStream({
     async start(controller) {
       // 클라이언트에게 연결 성공 알림
@@ -30,27 +32,46 @@ export async function GET(request: NextRequest) {
 
       // 채널 구독
       await subscriber.subscribe(`channel:${channelId}`, (message) => {
-        controller.enqueue(encoder.encode(`event: message\ndata: ${message}\n\n`));
+        if (!isControllerClosed) {
+          controller.enqueue(encoder.encode(`event: message\ndata: ${message}\n\n`));
+        }
       });
 
       // 사용자 목록 변경 구독
       await subscriber.subscribe(`users:update:${channelId}`, (message) => {
-        controller.enqueue(encoder.encode(`event: users\ndata: ${message}\n\n`));
+        if (!isControllerClosed) {
+          controller.enqueue(encoder.encode(`event: users\ndata: ${message}\n\n`));
+        }
       });
       
       // 에러 핸들링
       subscriber.on('error', (err) => {
         console.error('Redis 구독 에러:', err);
-        controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: '서버 오류가 발생했습니다.' })}\n\n`));
-        controller.close();
+        if (!isControllerClosed) {
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: '서버 오류가 발생했습니다.' })}\n\n`));
+          isControllerClosed = true;
+          controller.close();
+        }
       });
       
       // 클라이언트 연결 종료 감지
       request.signal.addEventListener('abort', async () => {
-        await subscriber.unsubscribe(`channel:${channelId}`);
-        await subscriber.unsubscribe(`users:update:${channelId}`);
-        await subscriber.quit();
-        controller.close();
+        try {
+          await subscriber.unsubscribe(`channel:${channelId}`);
+          await subscriber.unsubscribe(`users:update:${channelId}`);
+          await subscriber.quit();
+          
+          if (!isControllerClosed) {
+            isControllerClosed = true;
+            try {
+              controller.close();
+            } catch (closeError) {
+              console.error('컨트롤러 닫기 오류:', closeError);
+            }
+          }
+        } catch (error) {
+          console.error('연결 종료 시 오류 발생:', error);
+        }
       });
     }
   });
