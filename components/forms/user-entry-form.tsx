@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { 
   Card, 
   CardContent, 
@@ -55,6 +55,14 @@ export default function UserEntryForm({ onSubmit, channels, isLoading }: UserEnt
       channelId: channels.length > 0 ? channels[0].id : '',
     },
   })
+
+  // 채널 목록이 바뀔 때 첫 번째 채널을 기본값으로 설정
+  // (select를 바꾸지 않아도 입장 가능하게)
+  useEffect(() => {
+    if (channels.length > 0) {
+      form.setValue('channelId', channels[0].id)
+    }
+  }, [channels, form])
 
   const handleSubmit = form.handleSubmit(({ username, channelId }) => {
     onSubmit(username.trim(), channelId)
