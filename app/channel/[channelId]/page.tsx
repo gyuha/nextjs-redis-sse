@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useChatStore } from '@/lib/store'
-import { useSSEConnection, useKeepAlive, sendMessage } from '@/lib/chat'
+import { useSSEConnection, useKeepAlive, sendMessage, leaveChannel } from '@/lib/chat'
 import ChannelSidebar from '@/components/sidebar/channel-sidebar'
 import MessageList from '@/components/chat/message-list'
 import MessageInput from '@/components/chat/message-input'
@@ -36,6 +36,8 @@ export default function ChannelPage({ params }: ChannelPageProps) {
     connectionError
   } = useChatStore()
   
+  const [isSwitchingChannel, setIsSwitchingChannel] = useState(false)
+  
   // 로그인 상태 확인
   useEffect(() => {
     if (!isLoggedIn || !username) {
@@ -64,9 +66,15 @@ export default function ChannelPage({ params }: ChannelPageProps) {
   }
   
   // 채널 전환 핸들러
-  const handleChangeChannel = (newChannelId: string) => {
+  const handleChangeChannel = async (newChannelId: string) => {
     if (newChannelId !== decodedChannelId) {
-      router.push(`/channel/${encodeURIComponent(newChannelId)}`)
+      setIsSwitchingChannel(true)
+      try {
+        await leaveChannel(decodedChannelId, username)
+        router.push(`/channel/${encodeURIComponent(newChannelId)}`)
+      } finally {
+        setIsSwitchingChannel(false)
+      }
     }
   }
   
@@ -80,6 +88,16 @@ export default function ChannelPage({ params }: ChannelPageProps) {
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <span className="ml-2">로그인 상태를 확인 중...</span>
+      </div>
+    )
+  }
+
+  // UI 블록 처리
+  if (isSwitchingChannel) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <span className="ml-2">채널을 이동 중입니다...</span>
       </div>
     )
   }
