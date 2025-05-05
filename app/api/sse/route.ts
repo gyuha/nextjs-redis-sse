@@ -32,15 +32,31 @@ export async function GET(request: NextRequest) {
 
       // 채널 구독
       await subscriber.subscribe(`channel:${channelId}`, (message) => {
-        if (!isControllerClosed) {
-          controller.enqueue(encoder.encode(`event: message\ndata: ${message}\n\n`));
+        try {
+          if (!isControllerClosed) {
+            controller.enqueue(encoder.encode(`event: message\ndata: ${message}\n\n`));
+          }
+        } catch (err) {
+          console.error('메시지 이벤트 처리 중 오류:', err);
+          if (!isControllerClosed) {
+            isControllerClosed = true;
+            try { controller.close(); } catch {}
+          }
         }
       });
 
       // 사용자 목록 변경 구독
       await subscriber.subscribe(`users:update:${channelId}`, (message) => {
-        if (!isControllerClosed) {
-          controller.enqueue(encoder.encode(`event: users\ndata: ${message}\n\n`));
+        try {
+          if (!isControllerClosed) {
+            controller.enqueue(encoder.encode(`event: users\ndata: ${message}\n\n`));
+          }
+        } catch (err) {
+          console.error('사용자 목록 이벤트 처리 중 오류:', err);
+          if (!isControllerClosed) {
+            isControllerClosed = true;
+            try { controller.close(); } catch {}
+          }
         }
       });
       
@@ -50,29 +66,35 @@ export async function GET(request: NextRequest) {
         if (!isControllerClosed) {
           controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: '서버 오류가 발생했습니다.' })}\n\n`));
           isControllerClosed = true;
-          controller.close();
+          try { controller.close(); } catch {}
         }
       });
       
       // 클라이언트 연결 종료 감지
-      request.signal.addEventListener('abort', async () => {
+      async function cleanup() {
         try {
           await subscriber.unsubscribe(`channel:${channelId}`);
-          await subscriber.unsubscribe(`users:update:${channelId}`);
-          await subscriber.quit();
-          
-          if (!isControllerClosed) {
-            isControllerClosed = true;
-            try {
-              controller.close();
-            } catch (closeError) {
-              console.error('컨트롤러 닫기 오류:', closeError);
-            }
-          }
-        } catch (error) {
-          console.error('연결 종료 시 오류 발생:', error);
+        } catch (e) {
+          console.error('채널 구독 해제 오류:', e);
         }
-      });
+        try {
+          await subscriber.unsubscribe(`users:update:${channelId}`);
+        } catch (e) {
+          console.error('사용자 목록 구독 해제 오류:', e);
+        }
+        try {
+          await subscriber.quit();
+        } catch (e) {
+          console.error('Redis quit 오류:', e);
+        }
+        if (!isControllerClosed) {
+          isControllerClosed = true;
+          try { controller.close(); } catch (closeError) { console.error('컨트롤러 닫기 오류:', closeError); }
+        }
+      }
+      request.signal.addEventListener('abort', cleanup);
+      // 스트림 cancel 이벤트도 정리
+      stream.cancel = cleanup;
     }
   });
 
