@@ -114,6 +114,18 @@ export async function GET(request: NextRequest) {
             }
           }
         });
+
+        // 채널 목록 업데이트 구독 (전체 채널 정보 갱신용)
+        await subscriber.subscribe(`channels:update`, (message) => {
+          try {
+            if (!isControllerClosed) {
+              controller.enqueue(encoder.encode(`event: channels\ndata: ${message}\n\n`));
+              console.log(`[SSE] 채널 목록 업데이트 전송: ${message.substring(0, 100)}...`);
+            }
+          } catch (err) {
+            console.error('채널 목록 업데이트 이벤트 처리 중 오류:', err);
+          }
+        });
         
         // 에러 핸들링
         subscriber.on('error', (err) => {
@@ -165,6 +177,7 @@ export async function GET(request: NextRequest) {
             try {
               await subscriber.unsubscribe(`channel:${channelId}`);
               await subscriber.unsubscribe(`users:update:${channelId}`);
+              await subscriber.unsubscribe(`channels:update`);
               await subscriber.quit();
               console.log(`[SSE] ${channelId} 채널의 Redis 구독 정리 완료`);
             } catch (e) {

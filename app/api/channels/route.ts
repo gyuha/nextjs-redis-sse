@@ -30,6 +30,34 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// 모든 채널 정보를 업데이트하고 발행하는 함수
+async function updateAndPublishChannelsInfo(redis: any) {
+  try {
+    // 활성 채널 목록 가져오기
+    const channels = await getActiveChannels();
+    
+    // 각 채널별 사용자 수 계산
+    const channelData = await Promise.all(
+      channels.map(async (channel) => {
+        const users = await getChannelUsers(channel);
+        return {
+          id: channel,
+          name: channel,
+          userCount: users.length
+        };
+      })
+    );
+    
+    // 전체 채널 목록 정보 발행 - 모든 클라이언트가 구독할 수 있는 공통 채널
+    await redis.publish('channels:update', JSON.stringify(channelData));
+    
+    return channelData;
+  } catch (error) {
+    console.error('채널 정보 업데이트 중 오류:', error);
+    throw error;
+  }
+}
+
 // 사용자 채널 입장/퇴장
 export async function POST(request: NextRequest) {
   try {
@@ -52,9 +80,11 @@ export async function POST(request: NextRequest) {
       
       // 사용자 입장 알림
       const notification = {
+        id: `join-${Date.now()}`,
         type: 'system',
+        username: '시스템',
         content: `${username}님이 입장했습니다.`,
-        timestamp: Date.now()
+        timestamp: new Date().toISOString()
       };
       
       // 사용자 목록 업데이트 발행
@@ -62,6 +92,9 @@ export async function POST(request: NextRequest) {
       
       // 시스템 메시지 발행
       await redis.publish(`channel:${channelId}`, JSON.stringify(notification));
+      
+      // 모든 채널 정보 업데이트 및 발행
+      await updateAndPublishChannelsInfo(redis);
       
       return NextResponse.json({ success: true, users });
     } else if (action === 'leave') {
@@ -73,9 +106,11 @@ export async function POST(request: NextRequest) {
       
       // 사용자 퇴장 알림
       const notification = {
+        id: `leave-${Date.now()}`,
         type: 'system',
+        username: '시스템',
         content: `${username}님이 퇴장했습니다.`,
-        timestamp: Date.now()
+        timestamp: new Date().toISOString()
       };
       
       // 사용자 목록 업데이트 발행
@@ -83,6 +118,9 @@ export async function POST(request: NextRequest) {
       
       // 시스템 메시지 발행
       await redis.publish(`channel:${channelId}`, JSON.stringify(notification));
+      
+      // 모든 채널 정보 업데이트 및 발행
+      await updateAndPublishChannelsInfo(redis);
       
       return NextResponse.json({ success: true, users });
     } else {

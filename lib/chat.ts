@@ -115,6 +115,21 @@ export function useSSEConnection(channelId: string, username: string) {
         }
       });
       
+      // 채널 목록 업데이트 이벤트
+      eventSource.addEventListener('channels', (event) => {
+        try {
+          if (abortController.signal.aborted) return;
+          
+          const channelData = JSON.parse(event.data) as Array<{ id: string; name: string; userCount: number }>;
+          console.log('실시간 채널 목록 업데이트 수신:', channelData.length, '개 채널');
+          
+          // 스토어에 채널 목록 업데이트
+          useChatStore.getState().setChannels(channelData);
+        } catch (error) {
+          console.error('채널 목록 업데이트 파싱 오류:', error);
+        }
+      });
+      
       // 오류 발생 시
       eventSource.addEventListener('error', (err) => {
         if (abortController.signal.aborted) return;

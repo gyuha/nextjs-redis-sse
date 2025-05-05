@@ -16,6 +16,7 @@ interface ChannelState {
   channels: Array<{ id: string; name: string; userCount: number }>;
   setCurrentChannelId: (channelId: string) => void;
   setChannels: (channels: Array<{ id: string; name: string; userCount: number }>) => void;
+  updateChannelUserCount: (channelId: string, userCount: number) => void;
 }
 
 // 메시지 상태 인터페이스
@@ -74,6 +75,16 @@ export const useChatStore = create<ChatStore>((set) => ({
   // 채널 상태 관리 액션
   setCurrentChannelId: (channelId) => set({ currentChannelId: channelId }),
   setChannels: (channels) => set({ channels }),
+  
+  // 특정 채널의 사용자 수 업데이트
+  updateChannelUserCount: (channelId, userCount) => 
+    set((state) => ({
+      channels: state.channels.map(channel => 
+        channel.id === channelId 
+          ? { ...channel, userCount }
+          : channel
+      )
+    })),
   
   // 메시지 상태 관리 액션
   addMessage: (channelId, message) => 

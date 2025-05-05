@@ -19,7 +19,13 @@ export default function ChannelSidebar({
 }: ChannelSidebarProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
-  const { channels, setChannels, logout } = useChatStore()
+  const { 
+    channels, 
+    setChannels, 
+    logout, 
+    channelUsers, 
+    updateChannelUserCount 
+  } = useChatStore()
   
   // 채널 목록 불러오기
   useEffect(() => {
@@ -42,6 +48,15 @@ export default function ChannelSidebar({
     
     return () => clearInterval(intervalId)
   }, [setChannels])
+  
+  // 사용자 목록 변경 시 채널별 접속자 수 갱신
+  useEffect(() => {
+    // 모든 채널들에 대해 사용자 목록이 변경되면 접속자 수 업데이트
+    Object.entries(channelUsers).forEach(([channelId, users]) => {
+      // 사용자 수 업데이트 (현재 접속 중인 사용자 수)
+      updateChannelUserCount(channelId, users.length)
+    })
+  }, [channelUsers, updateChannelUserCount])
   
   // 로그아웃 처리
   const handleLogout = () => {
@@ -78,7 +93,7 @@ export default function ChannelSidebar({
                 }`}
               >
                 <span># {channel.name}</span>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs bg-muted/50 px-1.5 py-0.5 rounded-full">
                   {channel.userCount}명
                 </span>
               </button>
